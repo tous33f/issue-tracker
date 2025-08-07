@@ -13,7 +13,7 @@ const cleanUp=()=>{
 try{
     db=await connectDB()
     await whatsappService.start()
-    jiraService.subscribe()
+    // jiraService.subscribe()
 
     process.on('SIGINT',cleanUp)
     process.on('SIGTERM',cleanUp)

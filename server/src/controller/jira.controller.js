@@ -8,7 +8,7 @@ export class JiraService{
 
     constructor(){
         this.token=''
-        this.project=''
+        this.project='VA'
         this.jiraUrl=''
         this.agent=new https.Agent({
             rejectUnauthorized: false
@@ -133,15 +133,15 @@ export class JiraService{
         })
     }
 
-    async createTicket(issue){
+    async createTicket(title,description,assignee){
         const keys=['VA-430','VA-397','VA-427','VA-414','VA-400','VA-391','VA-373','VA-374','VA-376','VA-413','VA-365']
         let issueData = {
             fields: {
                 project: {
                     key: 'VA'
                 },
-                summary: issue?.title,
-                description: issue?.description,
+                summary: title,
+                description: description,
                 issuetype: {
                     name: 'Task'
                 },
@@ -149,7 +149,7 @@ export class JiraService{
                     name: 'Highest'
                 },
                 assignee:{
-                    name: issue?.assignee
+                    name: assignee
                 }
             }
         };
@@ -224,7 +224,7 @@ export class JiraService{
         catch(err){
             console.log(`Error in JIRA polling: ${err?.message}`)
         }
-        whatsappService.sendToAllClients({message: 'get'})
+        whatsappService.sendToAllClients({type: 'issue'})
         setTimeout(()=>this.runPolling(),this.timeout)
     }
 

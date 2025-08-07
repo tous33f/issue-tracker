@@ -11,11 +11,11 @@ const connectDB=()=>{
         const dbPath = path.join(__dirname, './data/whatsapp.db');
         const db=new sqlite3.Database(dbPath,(err)=>{
             db.serialize(()=>{
-                // db.run(`DROP TABLE IF EXISTS issues`)
+                db.run(`DROP TABLE IF EXISTS issues`)
                 db.run(`
                     CREATE TABLE IF NOT EXISTS issues (
                     id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
+                    title TEXT,
                     description TEXT,
                     status TEXT DEFAULT 'open',
                     priority TEXT DEFAULT 'medium',
@@ -23,6 +23,9 @@ const connectDB=()=>{
                     team_name TEXT,
                     whatsapp_group_id TEXT,
                     reporter_id TEXT,
+                    jira_id TEXT,
+                    current_step TEXT,
+                    issue_created boolean,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     resolved_at DATETIME)

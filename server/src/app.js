@@ -20,11 +20,12 @@ app.get('/api/events', (req, res) => {
 
   whatsappService.addConnection(res)
 
-  res.write(`data: ${JSON.stringify({ message: 'connect' })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: 'online' })}\n\n`);
 
-//   req.on('close', () => {
-//     console.log('Client disconnected');
-//   });
+  req.on('close', () => {
+    res.write(`data: ${JSON.stringify({ type: 'offline' })}\n\n`);
+  });
+
 });
 
 import { whatsappRouter } from "./routes/whatsapp.routes.js"

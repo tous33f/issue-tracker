@@ -1,17 +1,21 @@
 import {db} from '../index.js'
-import { v4 as uuidv4 } from 'uuid';
 import { jiraService } from './jira.controller.js';
+import { v4 as uuid } from 'uuid';
 
 export class IssueService{
 
   async analytics(req,res){
+
+    const {group}=req?.query
+    const query= (group && group.endsWith('@g.us')) ? `whatsapp_group_id='${group}'` : '';
+
     db.all(`select
-        (select count(*) from issues) as totalIssues,
-        (select count(*) from issues where priority=?) as criticalIssues,
-        (select count(*) from issues where status='open') as openIssues,
-        (select count(*) from issues where status!='open') as resolvedIssues,
-        (select AVG((resolved_at-created_at)/1000.0) from issues where resolved_at is not null) as avgResolution;
-      `,['critical'],(err,rows)=>{
+        (select count(*) from issues ${query ? `where ${query}`: ''}) as totalIssues,
+        (select count(*) from issues where priority=? ${query ? `and ${query}`: ''}) as criticalIssues,
+        (select count(*) from issues where status='open' ${query ? `and ${query}`: ''}) as openIssues,
+        (select count(*) from issues where status!='open' ${query ? `and ${query}`: ''}) as resolvedIssues,
+        (select AVG((resolved_at-created_at)/1000.0) from issues where resolved_at is not null ${query ? `and ${query}`: ''}) as avgResolution;
+      `,['High'],(err,rows)=>{
         if(err){
           res.status(401).json({
             data:null, message: 'Database error' + err?.message
@@ -25,10 +29,39 @@ export class IssueService{
       })
   }
 
+  async getIssues(req,res){
+
+    let {status,group,page}=req?.query
+    const query=[]
+    if(status && ['open','closed'].includes(status)){
+      query.push(`status='${status}'`)
+    }
+    if(group && group.endsWith('@g.us')){
+      query.push(`whatsapp_group_id='${group}'`)
+    }
+    if(!page || parseInt(page)==NaN || parseInt(page)<1){
+      page=0
+    }
+    else{
+      page=parseInt(page)-1
+    }
+
+    db.all(`SELECT * FROM issues ${query.length>0 ? `where ${query.join(' AND ')}`:'' } order by created_at desc limit 10 offset ${page*3}`,(err,data)=>{
+      if(err){
+          res.status(401).json({
+              data: null, message: 'Database error' + err?.message
+          })
+      }
+      else{
+          res.status(200).json({ data });
+      }
+    })
+  }
+
   async createIssueFromMessage(message,title,description){
     
     let issue = {
-      id: uuidv4(),
+      id: uuid(),
       title,
       description,
       status: 'open',
@@ -43,7 +76,7 @@ export class IssueService{
 
     try{
       issue.assignee=await this.getCurrentAssignee()
-      issue.id=await jiraService.createTicket(issue)
+      issue.id=await jiraService.createTicket(issue?.title,issue?.description,issue?.assignee)
       await this.storeIssue(issue);
       return issue?.id
     }
@@ -51,6 +84,85 @@ export class IssueService{
       console.log(`Error creating issue in database: ${err?.message}`)
     }
     
+  }
+
+    async handleFirstStep(message){
+    return new Promise((resolve,reject)=>{
+      db.run(`
+        insert into issues(id,team_name,whatsapp_group_id,reporter_id,current_step,issue_created,created_at,updated_at)
+        values(?,?,?,?,?,?,?,?)
+      `,[uuid(),message?.groupName,message?.groupId,message?.senderId,'first',false,new Date(),new Date()],async(err)=>{
+        if(err){
+          reject(err);
+        }
+        resolve()
+      })
+    })
+  }
+
+  async handleSecondStep(message,id){
+    return new Promise((resolve,reject)=>{
+      db.run(`
+        update issues set current_step=?, title=?, updated_at=? where id=?`
+        ,['second',message?.message,new Date(),id],async(err)=>{
+        if(err){
+          reject(err);
+        }
+        resolve()
+      })
+    })
+  }
+
+  async handleThirdStep(message,id){
+    return new Promise((resolve,reject)=>{
+      db.run(`
+        update issues set current_step=?, description=?, updated_at=? where id=?`
+        ,['third',message?.message,new Date(),id],async(err)=>{
+        if(err){
+          reject(err);
+        }
+        resolve()
+      })
+    })
+  }
+  
+  async handleFourthStep(message,title,description,id){
+    return new Promise(async(resolve,reject)=>{
+      const assignee=await this.getCurrentAssignee()
+      const issue_id=await jiraService.createTicket(title,description,assignee)
+      db.run(`
+        update issues set 
+        current_step=?,
+        assignee=?,
+        jira_id=?,
+        issue_created=?,
+        updated_at=?
+        where id=?`
+        ,['final',assignee,issue_id,true,new Date(),id],async(err)=>{
+        if(err){
+          reject(err);
+        }
+        resolve()
+      })
+    })
+  }
+
+  async requestCurrentStep(id){
+    return new Promise((resolve,reject)=>{
+      db.all(` select id,current_step,title,description from issues where issue_created=? and reporter_id=? `,[false,id],(err,rows)=>{
+        if(err){
+          reject(err)
+        }
+        else{
+          if(Array.isArray(rows) && rows.length<1){
+            resolve(null);
+          }
+          else{
+            resolve(rows[0])
+          }
+        }
+      })
+    })
   }
 
   async getCurrentAssignee(){

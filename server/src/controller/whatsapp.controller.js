@@ -26,6 +26,7 @@ class WhatsAppService {
 
     this.issueService = new IssueService();
     this.isReady = false;
+    this.qr=null
 
     this.initializeClient();
   }
@@ -41,24 +42,56 @@ class WhatsAppService {
     }
 
   initializeClient() {
+
+    this.client = new Client({
+        authStrategy: new LocalAuth(),
+        puppeteer: {
+            headless: true,
+            args: [
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-accelerated-2d-canvas',
+            '--no-zygote',
+            '--disable-infobars'
+            ]
+        }
+    });
+
     this.client.on('qr', (qr) => {
       console.log('Scan this QR code with WhatsApp:');
       qrcode.generate(qr, { small: true });
+      this.qr=qr;
+      this.sendToAllClients({type: 'qr',payload: qr})
     });
 
     this.client.on('ready', () => {
       console.log('WhatsApp client is ready!');
       this.isReady = true;
+      this.qr=null
+      this.sendToAllClients({type: 'client',payload: 'online'})
     });
 
+    this.client.on('change_state',(state)=>{
+      console.log(state)
+    })
+
     this.client.on('message', async (message) => {
-        await this.handleMessage(message);
+      await this.handleMessage(message);
     });
 
     this.client.on('disconnected', (reason) => {
       console.log('WhatsApp client disconnected:', reason);
       this.isReady = false;
     });
+  }
+
+  async logout(){
+    await this.client.logout();
+    this.isReady=false
+    this.sendToAllClients({type: 'client',payload: 'offline'})
+    this.initializeClient()
   }
 
   async start() {
@@ -78,42 +111,40 @@ class WhatsAppService {
     const chat=await message.getChat()
 
     db.all(`select group_id from groups`,async(err,rows)=>{
-        if(err){
-            console.log(err.message)
-            return;
-        }
-        const groups=rows.map(row=>row?.group_id)
-        if(!groups.includes(chat?.id?._serialized)){
-            return;
-        }
-        const extractedIssue =await this.processMessageForIssues({
-            message: message?.body,
-            groupId: chat?.id?._serialized,
-            groupName: chat?.name,
-            senderId: contact?.id?._serialized,
-            senderName: contact?.name || contact?.pushname || 'Unknown',
-            senderNumber: contact?.number,
-            senderId: contact?.id?._serialized,
-            timestamp: new Date(message.timestamp * 1000),
-        });
+      if(err){
+          console.log(err.message)
+          return;
+      }
+      const groups=rows.map(row=>row?.group_id)
+      if(!groups.includes(chat?.id?._serialized)){
+          return;
+      }
+      const extractedIssue =await this.processMessageForIssues({
+          message: message?.body,
+          groupId: chat?.id?._serialized,
+          groupName: chat?.name,
+          senderId: contact?.id?._serialized,
+          senderName: contact?.name || contact?.pushname || 'Unknown',
+          senderNumber: contact?.number,
+          senderId: contact?.id?._serialized,
+          timestamp: new Date(message.timestamp * 1000),
+      });
 
-        if(extractedIssue){
-          await this.sendConfirmation(chat?.id?._serialized,contact?.id?._serialized,extractedIssue)
-          this.sendToAllClients({message: 'get'})
-        }
+      if(extractedIssue){
+        await this.sendMessage(chat?.id?._serialized,contact?.id?._serialized,extractedIssue)
+        // this.sendToAllClients({type: 'issue'})
+      }
     })
 
   }
 
-  async sendConfirmation(chatId,senderId, issueId) {
+  async sendMessage(chatId,senderId, messageBody) {
     if (!this.isReady) return;
 
     const contact=await this.client.getContactById(senderId)
-    
-    const confirmationMessage = `*Issue Created Successfully*\n\n📋Issue ID: *${issueId}*\n\n@${contact.number}\nYour issues have been logged and assigned to the relevant team members. You'll receive updates as they are processed.\n\n`;
-
+  
     try {
-      await this.client.sendMessage(chatId, confirmationMessage,{mentions: [contact]});
+      await this.client.sendMessage(chatId, `${messageBody}.\n\n@${contact.number}`,{mentions: [contact]});
     } catch (error) {
       console.error('Error sending confirmation message:', error);
     }
@@ -138,19 +169,44 @@ class WhatsAppService {
     const regex = /^\[(\w+)\]\s*(.+)\n([\s\S]+)/;
     const match = message.message.match(regex);
 
-    if (!match || match?.length<3) {
+    // if (!match) {
+    //   return null;
+    // }
+
+    // const tag = match[1];
+    // if(tag && tag?.toLowerCase()!='issue'){
+    //   return null;
+    // }
+    try{
+      let response=null;
+      const issue=await this.issueService.requestCurrentStep(message?.senderId)
+      if(!issue){
+        console.log('first')
+        await this.issueService.handleFirstStep(message)
+        response='Please enter issue title'
+      }
+      else if(issue?.current_step && issue?.current_step=='first'){
+        console.log('second')
+        await this.issueService.handleSecondStep(message,issue?.id)
+        response='Please enter issue description'
+      }
+      else if(issue?.current_step && issue?.current_step=='second'){
+        console.log('third')
+        await this.issueService.handleThirdStep(message,issue?.id)
+        response=`Add any attachments or reply "No"`
+      }
+      else if(issue?.current_step && issue?.current_step=='third'){
+        console.log('fourth')
+        await this.issueService.handleFourthStep(message,issue?.title,issue?.description,issue?.id)
+        response=`Issue created successfully`
+      }
+
+      return response
+    }
+    catch(err){
+      console.log(err?.message)
       return null;
     }
-
-    const tag = match[1];
-    if(tag && tag?.toLowerCase()!='issue'){
-      return null;
-    }
-    const title = match[2];
-    const description = match[3];
-
-    const issueId = await this.issueService.createIssueFromMessage(message, title, description );
-    return issueId;
   }
 
   async getWhatsappGroups(req,res){
@@ -214,19 +270,6 @@ class WhatsAppService {
                 res.status(200).json({ data });
             }
         });
-    }
-
-    async getIssues(req,res){
-        db.all(`SELECT * FROM issues`,(err,data)=>{
-            if(err){
-                res.status(401).json({
-                    data: null, message: 'Database error' + err?.message
-                })
-            }
-            else{
-                res.status(200).json({ data });
-            }
-        })
     }
 
     async deleteGroup(req,res){
