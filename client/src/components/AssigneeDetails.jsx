@@ -25,7 +25,7 @@ export const AssigneeDetails = ({assignees,setAssignees}) => {
 
 
     return (
-        <div className="bg-white rounded-lg shadow-sm border mb-8">
+        <div className="bg-white rounded-lg shadow-sm  mb-8">
         <div className="px-6 py-4 border-b border-gray-200">
             <div className="flex items-center justify-between">
             <div>

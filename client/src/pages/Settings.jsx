@@ -2,10 +2,11 @@
 import { useState, useEffect } from "react"
 import React from "react"
 import axios from "axios"
-import { PlusIcon,GroupIcon,TrashIcon, SettingsIcon } from "../constants/icons"
+import { PlusIcon,GroupIcon,TrashIcon, SettingsIcon, UserIcon } from "../constants/icons"
 import { AddGroup } from "../components/AddGroup"
 import { AddAssignee } from "../components/AddAssignee"
 import { AssigneeDetails } from "../components/AssigneeDetails"
+import { QR } from "./QR"
 
 function Settings() {
 
@@ -24,11 +25,61 @@ function Settings() {
             console.log(err?.message)
         })
 
+        axios.get(`/api/w/qr`)
+        .then(res=>{
+            setQr(res.data?.data)
+        })
+        .catch(err=>{
+            console.log(err?.message)
+        })
+
+    },[])
+
+    useEffect(()=>{
+        const eventSource = new EventSource("/api/events");
+
+        eventSource.onmessage = (event) => {
+            const {type,payload} = JSON.parse(event.data);
+            if(type && type=='issue'){
+                fetchData()
+            }
+            if(type && type=='client' && payload){
+                if(payload=='online'){
+                    setConnected(true);
+                    setQr(false)
+                }
+                if(payload=='offline') setConnected(false)
+            }
+            if(type && type=='qr' && payload){
+                setQr(payload)
+            }
+            if(type && type=='offline'){
+                setQr(null)
+                setConnected(false)
+            }
+        };
+
+        eventSource.onerror = (err) => {
+        console.error("SSE error:", err);
+        eventSource.close();
+        };
+
+        axios.get(`/api/w/connection`)
+        .then(res=>{
+            setConnected(res.data?.data)
+        })
+        .catch(err=>{
+            console.log(err?.message)
+        })
+
+        return () => eventSource.close();
     },[])
     
   // Update the initial addedGroups state to include participants:
     const [addedGroups, setAddedGroups] = useState([])
     const [assignees,setAssignees]=useState([])
+    const [connected,setConnected]=useState(false)
+    const [qr,setQr]=useState(null)
 
   //Add new state variables after the existing ones:
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
@@ -43,23 +94,39 @@ function Settings() {
     })
   }
 
+  const handleLogout=()=>{
+    axios.get(`/api/w/logout`)
+    .then(res=>{
+      setConnected(false)
+    })
+    .catch(err=>{
+        console.log(err.message)
+    })
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
+      <header className="bg-white shadow-sm ">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-3">
                 <SettingsIcon />
               <h1 className="text-xl font-semibold text-gray-900">Settings</h1>
             </div>
+            <div className=" flex items-center space-x-3 ">
+              <p className="text-sm font-semibold" >{connected ? '🟢 Connected' : '🔴 Disconnected' }</p>
+              {/* {connected && <button onClick={handleLogout} className="text-xl font-semibold text-gray-900 hover:bg-gray-100 hover:rounded-4xl p-2" to={'/settings'} >{<UserIcon />}</button>} */}
+            </div>
           </div>
         </div>
       </header>
 
+      {!connected && <QR qr={qr} />}
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Add New Group Section */}
-        <div className="bg-white rounded-lg shadow-sm border mb-8">
+        <div className="bg-white rounded-lg shadow-sm  mb-8">
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-lg font-medium text-gray-900">Whatsapp Instance Settings</h2>
             <p className="text-sm text-gray-500 mt-1">Connect a new WhatsApp group to monitor issues or add a new assignee from Jira</p>
@@ -92,7 +159,7 @@ function Settings() {
         <AssigneeDetails assignees={assignees} setAssignees={setAssignees} />
 
         {/* Connected Groups Section */}
-        <div className="bg-white rounded-lg shadow-sm border">
+        <div className="bg-white rounded-lg shadow-sm ">
           <div className="px-6 py-4 border-b border-gray-200">
             <div className="flex items-center justify-between">
               <div>

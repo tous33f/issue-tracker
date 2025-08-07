@@ -9,73 +9,98 @@ import { IssueDetails } from "../components/IssueDetails.jsx"
 
 function Dashboard() {
 
-    useEffect(()=>{
-
-        const fetchData=()=>{
-            axios.get(`/api/a/issues`)
-            .then(res=>{
-                setIssues(res.data?.data)
-            })
-            .catch(err=>{
-                console.log(err?.message)
-            })
-
-            axios.get(`/api/a/issues/analytics`)
-            .then(res=>{
-                setAnalytics(res.data?.data)
-            })
-            .catch(err=>{
-                console.log(err?.message)
-            })
-        }
-
-        fetchData()
-
-        const eventSource = new EventSource("/api/events");
-
-        eventSource.onmessage = (event) => {
-            const {message} = JSON.parse(event.data);
-            console.log(message)
-            if(message=='get'){
-                fetchData()
-            }
-        };
-
-        eventSource.onerror = (err) => {
-        console.error("SSE error:", err);
-        eventSource.close();
-        };
-
-        return () => eventSource.close();
-
-    },[])
-
-  const [issues,setIssues] = useState([])
+  const [connected,setConnected]=useState(false)
   const [filters, setFilters] = useState({
     group: "all",
     priority: "all",
     status: "all",
   })
-  const [selectedGroup, setSelectedGroup] = useState("all")
+  const [issues,setIssues] = useState([])
   const [selectedIssue, setSelectedIssue] = useState(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [analytics,setAnalytics]=useState({totalIssues:0,criticalIssues:0,openIssues:0,resolvedIssues:0,avgResolution:0 })
+  const page_size=10
 
   // Get unique values for filters
-  const groups = [...new Set(issues.map((issue) => issue.groupName))]
+  const [groups,setGroups]=useState([])
+  let [currentPage,setCurrentPage]=useState(1)
   const priorities = [...new Set(issues.map((issue) => issue.priority))]
-  const statuses = [...new Set(issues.map((issue) => issue.status))]
+  const statuses = ['open','closed']
 
-  // Filter issues based on current filters
-  const filteredIssues = useMemo(() => {
-    return issues.filter((issue) => {
-      return (
-        (filters.group === "all" || issue.groupName === filters.group) &&
-        (filters.priority === "all" || issue.priority === filters.priority) &&
-        (filters.status === "all" || issue.status === filters.status)
-      )
+  const fetchData=()=>{
+    const params=new URLSearchParams()
+    Object.keys(filters).map(filter=>{
+      if(filters[filter]!='all'){
+        params.set(filter,filters[filter])
+      }
     })
-  }, [issues, filters])
+    params.set('page',currentPage)
+    
+    axios.get(`/api/a/issues?${params?.toString()}`)
+    .then(res=>{
+        setIssues(res.data?.data)
+    })
+    .catch(err=>{
+        console.log(err?.message)
+    })
+
+    axios.get(`/api/a/issues/analytics${filters?.group!='all'?`?group=${filters.group}`:''}`)
+    .then(res=>{
+        setAnalytics(res.data?.data)
+    })
+    .catch(err=>{
+        console.log(err?.message)
+    })
+
+    axios.get(`/api/a/groups`)
+    .then(res=>{
+      setGroups(res.data?.data?.map(group=>{
+        return {
+          id: group?.id,
+          name: group?.name
+        }
+      }))
+    })
+    .catch(err=>{
+        console.log(err?.message)
+    })
+  }
+
+  useEffect(()=>{
+
+    fetchData()
+
+  },[filters,currentPage])
+
+  useEffect(()=>{
+    const eventSource = new EventSource("/api/events");
+
+    eventSource.onmessage = (event) => {
+      const {type,payload} = JSON.parse(event.data);
+      if(type && type=='issue'){
+        fetchData()
+      }
+      if(type && type=='client' && payload){
+        if(payload=='online') setConnected(true);
+        if(payload=='offline') setConnected(false)
+      }
+    };
+
+    eventSource.onerror = (err) => {
+      console.error("SSE error:", err);
+      eventSource.close();
+    };
+
+    axios.get(`/api/w/connection`)
+    .then(res=>{
+        setConnected(res.data?.data)
+    })
+    .catch(err=>{
+        console.log(err?.message)
+    })
+
+    return () => eventSource.close();
+  },[])
 
   const handleFilterChange = (filterType, value) => {
     setFilters((prev) => ({
@@ -108,15 +133,16 @@ function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
+      <header className="bg-white shadow-sm ">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-3">
               <WhatsAppIcon />
               <h1 className="text-xl font-semibold text-gray-900">WhatsApp Issue Dashboard</h1>
             </div>
-            <div className="text-xl font-semibold text-gray-900 hover:bg-gray-100 hover:rounded-4xl p-2">
-                <Link to={'/settings'} >{<SettingsIcon />}</Link>
+            <div className=" flex items-center space-x-3 ">
+              <p className="text-sm font-semibold" >{connected ? '🟢 Connected' : '🔴 Disconnected' }</p>
+              <Link className="text-xl font-semibold text-gray-900 hover:bg-gray-100 hover:rounded-4xl p-2" to={'/settings'} >{<SettingsIcon />}</Link>
             </div>
           </div>
         </div>
@@ -128,21 +154,21 @@ function Dashboard() {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-medium text-gray-900">Analytics Overview</h2>
             <select
-              value={selectedGroup}
-              onChange={(e) => setSelectedGroup(e.target.value)}
+              value={filters?.group}
+              onChange={(e) => handleFilterChange('group',e.target.value)}
               className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">All Groups</option>
               {groups.map((group) => (
-                <option key={group} value={group}>
-                  {group}
+                <option key={group?.id} value={group?.id}>
+                  {group?.name}
                 </option>
               ))}
             </select>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-            <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="bg-white p-6 rounded-lg shadow-sm ">
               <div className="flex items-center">
                 <div className="p-2 bg-blue-100 rounded-lg">
                   <ChartIcon />
@@ -154,7 +180,7 @@ function Dashboard() {
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="bg-white p-6 rounded-lg shadow-sm ">
               <div className="flex items-center">
                 <div className="p-2 bg-red-100 rounded-lg">
                   <ExclamationIcon />
@@ -166,7 +192,7 @@ function Dashboard() {
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="bg-white p-6 rounded-lg shadow-sm ">
               <div className="flex items-center">
                 <div className="p-2 bg-orange-100 rounded-lg">
                   <IssueIcon />
@@ -178,7 +204,7 @@ function Dashboard() {
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="bg-white p-6 rounded-lg shadow-sm ">
               <div className="flex items-center">
                 <div className="p-2 bg-green-100 rounded-lg">
                   <CheckIcon />
@@ -190,7 +216,7 @@ function Dashboard() {
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="bg-white p-6 rounded-lg shadow-sm ">
               <div className="flex items-center">
                 <div className="p-2 bg-purple-100 rounded-lg">
                   <ClockIcon />
@@ -205,7 +231,7 @@ function Dashboard() {
         </div>
 
         {/* Filters */}
-        <div className="bg-white p-4 rounded-lg shadow-sm border mb-6">
+        <div className="bg-white p-4 rounded-lg shadow-sm  mb-6">
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
               <FilterIcon />
@@ -219,13 +245,13 @@ function Dashboard() {
             >
               <option value="all">All Groups</option>
               {groups.map((group) => (
-                <option key={group} value={group}>
-                  {group}
+                <option key={group?.id} value={group?.id}>
+                  {group?.name}
                 </option>
               ))}
             </select>
 
-            <select
+            {/* <select
               value={filters.priority}
               onChange={(e) => handleFilterChange("priority", e.target.value)}
               className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -236,14 +262,14 @@ function Dashboard() {
                   {priority}
                 </option>
               ))}
-            </select>
+            </select> */}
 
             <select
               value={filters.status}
               onChange={(e) => handleFilterChange("status", e.target.value)}
               className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="all">All Statuses</option>
+              <option value="all">All Status</option>
               {statuses.map((status) => (
                 <option key={status} value={status}>
                   {status}
@@ -252,13 +278,13 @@ function Dashboard() {
             </select>
 
             <div className="ml-auto text-sm text-gray-500">
-              Showing {filteredIssues.length} of {issues.length} issues
+              Showing {issues.length*currentPage} of {analytics.totalIssues} issues
             </div>
           </div>
         </div>
 
         {/* Issues Table */}
-        <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+        <div className="bg-white rounded-lg shadow-sm  overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
             <h3 className="text-lg font-medium text-gray-900">Issues</h3>
           </div>
@@ -291,7 +317,7 @@ function Dashboard() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredIssues.map((issue) => (
+                {issues.map((issue) => (
                   <tr
                     key={issue?.id}
                     className="hover:bg-gray-50 cursor-pointer transition-colors duration-150"
@@ -333,12 +359,43 @@ function Dashboard() {
             </table>
           </div>
 
-          {filteredIssues.length === 0 && (
+          {issues.length === 0 && (
             <div className="text-center py-12">
               <div className="text-gray-500">No issues found matching the current filters.</div>
             </div>
           )}
         </div>
+        {/* Pagination Controls */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-white">
+          <div className="text-sm text-gray-700">
+            Page {currentPage} of {Math.ceil(analytics?.totalIssues/page_size)}
+          </div>
+          <div className="flex space-x-2">
+            <button
+              onClick={()=>setCurrentPage(prev=>prev-1)}
+              disabled={currentPage === 1}
+              className={`px-4 py-2 text-sm font-medium border rounded-md ${
+                currentPage === 1
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              Previous
+            </button>
+            <button
+              onClick={()=>setCurrentPage(prev=>prev+1)}
+              disabled={currentPage === Math.ceil(analytics?.totalIssues/page_size)}
+              className={`px-4 py-2 text-sm font-medium border rounded-md ${
+                currentPage === Math.ceil(analytics?.totalIssues/page_size)
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+
         {/* Issue Detail Modal */}
         {isModalOpen && selectedIssue && (
             <IssueDetails selectedIssue={selectedIssue} closeIssueModal={closeIssueModal} />
