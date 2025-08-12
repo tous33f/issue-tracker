@@ -29,6 +29,40 @@ export class IssueService{
       })
   }
 
+  async assigneeReport(req,res){
+    let {filter}=req?.query
+    if(!filter || (filter && !['day','week','month'].includes(filter))){
+      filter='day'
+    }
+    const now = Date.now();
+    const oneDay = 24 * 60 * 60 * 1000;
+    const today = now - (oneDay)
+    const lastWeek = now - (7 * oneDay);
+    const lastMonth = now - (30 * oneDay);
+
+    const query={
+      day: today,
+      week: lastWeek,
+      month: lastMonth
+    }
+
+    db.all(`
+      select t.assignee,count(*) as issuesResolved,AVG(t.avg_resolution) as avgResolution from (select assignee,(resolved_at-created_at)/1000.0 as avg_resolution from issues where resolved_at is not null AND resolved_at>?) as t group by t.assignee;
+    `,[query[filter]],(err,rows)=>{
+      if(err){
+        res.status(401).json({
+          data:null, message: 'Database error' + err?.message
+        })
+      }
+      else{
+        res.status(200).json({
+          data:rows, message: 'Assignee report fetched successfully'
+        })
+      }
+    })
+
+  }
+
   async getIssues(req,res){
 
     let {status,group,page}=req?.query
@@ -89,9 +123,9 @@ export class IssueService{
     async handleFirstStep(message){
     return new Promise((resolve,reject)=>{
       db.run(`
-        insert into issues(id,team_name,whatsapp_group_id,reporter_id,current_step,issue_created,created_at,updated_at)
-        values(?,?,?,?,?,?,?,?)
-      `,[uuid(),message?.groupName,message?.groupId,message?.senderId,'first',false,new Date(),new Date()],async(err)=>{
+        insert into issues(id,team_name,whatsapp_group_id,reporter_id,current_step,issue_created,status,created_at,updated_at)
+        values(?,?,?,?,?,?,?,?,?)
+      `,[uuid(),message?.groupName,message?.groupId,message?.senderId,'first',false,'pending',new Date(),new Date()],async(err)=>{
         if(err){
           reject(err);
         }
@@ -113,11 +147,20 @@ export class IssueService{
     })
   }
 
-  async handleThirdStep(message,id){
-    return new Promise((resolve,reject)=>{
+  async handleThirdStep(title,description,id){
+
+    return new Promise(async(resolve,reject)=>{
+      const assignee=await this.getCurrentAssignee()
+      const issue_id=await jiraService.createTicket(title,description,assignee)
       db.run(`
-        update issues set current_step=?, description=?, updated_at=? where id=?`
-        ,['third',message?.message,new Date(),id],async(err)=>{
+        update issues set 
+        current_step=?,
+        description=?,
+        assignee=?,
+        jira_id=?,
+        updated_at=?
+        where id=?`
+        ,['third',description,assignee,issue_id,new Date(),id],async(err)=>{
         if(err){
           reject(err);
         }
@@ -126,23 +169,38 @@ export class IssueService{
     })
   }
   
-  async handleFourthStep(message,title,description,id){
+  async handleFourthStep(message,issue_id,id){
     return new Promise(async(resolve,reject)=>{
-      const assignee=await this.getCurrentAssignee()
-      const issue_id=await jiraService.createTicket(title,description,assignee)
+      if(message?.data){
+        await jiraService.uploadAttachment(issue_id,message?.data,message?.filename)
+        resolve(`Add any attachments or reply "No"`)
+        return
+      }
       db.run(`
         update issues set 
         current_step=?,
-        assignee=?,
-        jira_id=?,
         issue_created=?,
+        status=?,
         updated_at=?
         where id=?`
-        ,['final',assignee,issue_id,true,new Date(),id],async(err)=>{
+        ,['final',true,'open',new Date(),id],async(err)=>{
         if(err){
           reject(err);
         }
-        resolve()
+        resolve(`Issue created successfully with Issue ID: ${issue_id}`)
+      })
+    })
+  }
+
+  async handleReset(reporter_id){
+    return new Promise((resolve,reject)=>{
+      db.run(`delete from issues where reporter_id=? and issue_created=?`,[reporter_id,false],(err)=>{
+        if(err){
+          reject(err)
+        }
+        else{
+          resolve(this.changes>0)
+        }
       })
     })
   }

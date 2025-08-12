@@ -105,7 +105,7 @@ class WhatsAppService {
 
   async handleMessage(message){
     if(!message.from.endsWith('@g.us')){
-        return;
+      return;
     }
     const contact=await message.getContact()
     const chat=await message.getChat()
@@ -119,6 +119,13 @@ class WhatsAppService {
       if(!groups.includes(chat?.id?._serialized)){
           return;
       }
+      let filename=null,data=null;
+      if(message?.hasMedia){
+        const media=await message?.downloadMedia()
+        filename=media?.filename
+        data=media?.data
+      }
+
       const extractedIssue =await this.processMessageForIssues({
           message: message?.body,
           groupId: chat?.id?._serialized,
@@ -127,12 +134,13 @@ class WhatsAppService {
           senderName: contact?.name || contact?.pushname || 'Unknown',
           senderNumber: contact?.number,
           senderId: contact?.id?._serialized,
+          filename,
+          data,
           timestamp: new Date(message.timestamp * 1000),
       });
 
       if(extractedIssue){
         await this.sendMessage(chat?.id?._serialized,contact?.id?._serialized,extractedIssue)
-        // this.sendToAllClients({type: 'issue'})
       }
     })
 
@@ -164,23 +172,38 @@ class WhatsAppService {
     }
   }
 
+  async sendIssueCommentMessage(chatId,senderId, issueId, name,body) {
+    if (!this.isReady) return;
+
+    const contact=await this.client.getContactById(senderId)
+    
+    const confirmationMessage = `@${contact.number}, update received by ${name} for the Issue ID: ${issueId} \n\n${body}`;
+
+    try {
+      await this.client.sendMessage(chatId, confirmationMessage,{mentions: [contact]});
+    } catch (error) {
+      console.error('Error sending confirmation message:', error);
+    }
+  }
+
   async processMessageForIssues(message){
 
-    const regex = /^\[(\w+)\]\s*(.+)\n([\s\S]+)/;
-    const match = message.message.match(regex);
-
-    // if (!match) {
-    //   return null;
-    // }
-
-    // const tag = match[1];
-    // if(tag && tag?.toLowerCase()!='issue'){
-    //   return null;
-    // }
+    // const regex = /^\[(\w+)\]/;
+    const match = message.message;
     try{
       let response=null;
       const issue=await this.issueService.requestCurrentStep(message?.senderId)
-      if(!issue){
+      if(match.trim().toLowerCase()=='@reset'){
+        if(issue?.current_step=='third'){
+          await this.issueService.handleFourthStep(message,issue?.jira_id,issue?.id)
+          response=`Issue created successfully`
+          return response
+        }
+        console.log('reset')
+        this.issueService.handleReset(message?.senderId)
+        return response
+      }
+      if(!issue && match.trim().toLowerCase()=='@issue'){
         console.log('first')
         await this.issueService.handleFirstStep(message)
         response='Please enter issue title'
@@ -192,13 +215,13 @@ class WhatsAppService {
       }
       else if(issue?.current_step && issue?.current_step=='second'){
         console.log('third')
-        await this.issueService.handleThirdStep(message,issue?.id)
+        await this.issueService.handleThirdStep(issue?.title,message?.message,issue?.id)
         response=`Add any attachments or reply "No"`
       }
       else if(issue?.current_step && issue?.current_step=='third'){
         console.log('fourth')
-        await this.issueService.handleFourthStep(message,issue?.title,issue?.description,issue?.id)
-        response=`Issue created successfully`
+        response=await this.issueService.handleFourthStep(message,issue?.jira_id,issue?.id)
+        this.sendToAllClients({type: 'issue'})
       }
 
       return response

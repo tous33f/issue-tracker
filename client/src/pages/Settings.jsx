@@ -7,6 +7,7 @@ import { AddGroup } from "../components/AddGroup"
 import { AddAssignee } from "../components/AddAssignee"
 import { AssigneeDetails } from "../components/AssigneeDetails"
 import { QR } from "./QR"
+import { AssigneeReport } from "../components/AssigneeReport"
 
 function Settings() {
 
@@ -155,6 +156,8 @@ function Settings() {
             </div>
           </div>
         </div>
+
+        <AssigneeReport />
 
         <AssigneeDetails assignees={assignees} setAssignees={setAssignees} />
 

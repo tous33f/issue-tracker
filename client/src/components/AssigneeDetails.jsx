@@ -23,7 +23,6 @@ export const AssigneeDetails = ({assignees,setAssignees}) => {
         .catch(err=>console.log(err?.message))
     }
 
-
     return (
         <div className="bg-white rounded-lg shadow-sm  mb-8">
         <div className="px-6 py-4 border-b border-gray-200">

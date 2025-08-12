@@ -32,8 +32,11 @@ const getStatusColor = (status) => {
 }
 
 const getAvgResolution=(sec)=>{
-  if(sec>60*59) return `${Math.floor(sec/60*60)}h`;
-  else if(sec>60) return `${Math.floor(sec/60)}m`;
+  console.log(sec/(60*60*24))
+  if(sec>=60*60*24*30) return `${Math.floor(sec/(60*60*24*30))}M`;
+  else if(sec>=60*60*24) return `${Math.floor(sec/(60*60*24))}d`;
+  else if(sec>=60*60) return `${Math.floor(sec/(60*60))}h`;
+  else if(sec>=60) return `${Math.floor(sec/60)}m`;
   else return `${Math.floor(sec)}s`;
 }
 

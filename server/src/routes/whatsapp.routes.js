@@ -16,6 +16,7 @@ router.delete('/a/groups',(req,res)=>whatsappService.deleteGroup(req,res))
 
 router.get('/a/issues',(req,res)=>issueService.getIssues(req,res))
 router.get('/a/issues/analytics',(req,res)=>issueService.analytics(req,res))
+router.get('/a/assignee/analytics',(req,res)=>issueService.assigneeReport(req,res))
 
 router.get('/w/connection',(req,res)=>{
     res.status(201).json({

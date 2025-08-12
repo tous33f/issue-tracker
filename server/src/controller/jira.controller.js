@@ -3,6 +3,8 @@ import {db} from '../index.js'
 import https from 'https'
 import axios from 'axios'
 import { whatsappService } from './whatsapp.controller.js'
+import { v4 as uuid } from 'uuid'
+import { PassThrough } from 'stream'
 
 export class JiraService{
 
@@ -134,7 +136,7 @@ export class JiraService{
     }
 
     async createTicket(title,description,assignee){
-        const keys=['VA-430','VA-397','VA-427','VA-414','VA-400','VA-391','VA-373','VA-374','VA-376','VA-413','VA-365']
+        const keys=['VA-413','VA-397','VA-427','VA-414','VA-400','VA-391','VA-373','VA-374','VA-376','VA-430','VA-365']
         let issueData = {
             fields: {
                 project: {
@@ -160,7 +162,7 @@ export class JiraService{
 
     async updateIssuesById(){
         return new Promise((resolve,reject)=>{
-            db.all(`select id from issues where status='open';`,(err,rows)=>{
+            db.all(`select jira_id as id from issues where status='open';`,(err,rows)=>{
                 if(err){
                     reject(err)
                 }
@@ -194,8 +196,78 @@ export class JiraService{
                     })
                 })
                 .catch(err=>{
+                    console.log(err?.message)
                     reject(err)
                 })
+            })
+        })
+    }
+
+    async syncComments(){
+        return new Promise((resolve,reject)=>{
+            db.all(`select jira_id as id,comments,whatsapp_group_id,reporter_id from issues where status='open' `,(err,rows)=>{
+                if(err){
+                    reject(err)
+                    return;
+                }
+                else{
+                    const open_issues=rows?.map(row=>row?.id)
+                    if(Array.isArray(open_issues) && open_issues.length<1){
+                        resolve()
+                        return;
+                    }
+                    axios.get(`${this.jiraUrl}/rest/api/2/search?jql=issuekey+IN+( ${open_issues?.join(',') || ''} )&fields=comment`,{
+                        headers: {
+                            ...this.getHeaders()
+                        },
+                        httpsAgent: this.agent
+                    })
+                    .then((res)=>{
+                        const data=res.data.issues?.map(issue=>{
+                            return {
+                                id: issue?.key,
+                                comments: issue?.fields?.comment?.comments?.map(comm=>{
+                                    return {
+                                        id: comm?.id,
+                                        name:comm?.author?.name,
+                                        body: comm?.body
+                                    }
+                                })
+                            }
+                        })
+                        // console.log(data)
+                        rows?.forEach(async (row)=>{
+                            const db_comments=new Set( (row?.comments?.split(',')) || [] );
+                            const jira_comments=new Set( (data?.find(issue=>issue?.id==row?.id)?.comments?.map(v=>v.id)) || [] )
+                            const new_comments=jira_comments.difference(db_comments)
+                            // console.log(db_comments,jira_comments,new_comments)
+                            new_comments.forEach(async (id)=>{
+                                const comment=data?.find(v=>v?.id==row?.id)?.comments?.find(v=>v?.id==id)
+                                await whatsappService.sendIssueCommentMessage(row?.whatsapp_group_id,row?.reporter_id,row?.id,comment?.name,comment?.body)
+                            })
+                            const updated_comments=Array.from(jira_comments).join(',')
+                            await this.updateIssueComments(updated_comments,row?.id)
+                        })
+                        resolve()
+                    })
+                    .catch(err=>{
+                        console.log(err?.message)
+                        reject(err)
+                    })
+                }
+            })
+        })
+    }
+
+    async updateIssueComments(updated_comments,jira_id){
+        return new Promise((resolve,reject)=>{
+            db.run(`update issues set comments=? where jira_id=?`,[updated_comments,jira_id],err=>{
+                if(err){
+                    reject(err)
+                }
+                else{
+                    resolve()
+                }
             })
         })
     }
@@ -216,10 +288,27 @@ export class JiraService{
         })
     }
 
+    async uploadAttachment(issueKey,base64Str,filename){
+        if(!filename){
+            filename=uuid()
+        }
+        console.log(filename)
+        const binaryData=Buffer.from(base64Str,'base64')
+        const stream=new PassThrough()
+        stream.end(binaryData)
+        const form=new FormData()
+        form.append('file',stream)
+        stream.destroy()
+        console.log(form)
+    }
+
     async runPolling(){
         if(!this.shouldRun) return;
         try{
-            await this.updateIssuesById()
+            if(whatsappService.isClientReady()){
+                await this.updateIssuesById()
+                await this.syncComments()
+            }
         }
         catch(err){
             console.log(`Error in JIRA polling: ${err?.message}`)
