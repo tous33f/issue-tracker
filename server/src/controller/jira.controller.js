@@ -155,8 +155,26 @@ export class JiraService{
                 }
             }
         };
+        console.log(issueData)
         return new Promise((resolve,reject)=>{
             resolve(keys[this.cnt++])
+            // axios.post(`${this.jiraUrl}/rest/api/2/issue`,issueData,{
+            //     headers: {
+            //         ...this.getHeaders()
+            //     },
+            //     httpsAgent: this.agent
+            // })
+            // .then(res=>{
+            //     console.log(res?.data)
+            //     const id=res.data?.key
+            //     resolve(id)
+            //     return;
+            // })
+            // .catch(err=>{
+            //     console.log(err?.message)
+            //     reject(err?.message)
+            //     return;
+            // })
         })
     }
 
@@ -289,17 +307,36 @@ export class JiraService{
     }
 
     async uploadAttachment(issueKey,base64Str,filename){
-        if(!filename){
-            filename=uuid()
-        }
-        console.log(filename)
-        const binaryData=Buffer.from(base64Str,'base64')
-        const stream=new PassThrough()
-        stream.end(binaryData)
-        const form=new FormData()
-        form.append('file',stream)
-        stream.destroy()
-        console.log(form)
+        return new Promise(async (resolve,reject)=>{
+            try{
+                if(!issueKey){
+                    reject('Issue key is not given')
+                    return;
+                }
+                if(!filename){
+                    filename=uuid()
+                }
+                console.log(filename)
+                const binaryData=Buffer.from(base64Str,'base64')
+                const stream=new PassThrough()
+                stream.end(binaryData)
+                const form=new FormData()
+                form.append('file',stream)
+                // await axios.post(`${this.jiraUrl}/rest/api/2/issue/${issueKey}/attachments`,form,{
+                //     headers: {
+                //         ...this.getHeaders()
+                //     },
+                //     httpsAgent: this.agent
+                // })
+                stream.destroy()
+                console.log(form)
+                resolve()
+            }
+            catch(err){
+                console.log(err?.message)
+                reject(err?.message)
+            }
+        })
     }
 
     async runPolling(){

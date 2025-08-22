@@ -207,7 +207,7 @@ export class IssueService{
 
   async requestCurrentStep(id){
     return new Promise((resolve,reject)=>{
-      db.all(` select id,current_step,title,description from issues where issue_created=? and reporter_id=? `,[false,id],(err,rows)=>{
+      db.all(` select id,current_step,title,description,jira_id from issues where issue_created=? and reporter_id=? `,[false,id],(err,rows)=>{
         if(err){
           reject(err)
         }
